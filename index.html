@@ -1,0 +1,485 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Voice Prompter Cam</title>
+<style>
+  /* Layout: camera feed fills the screen, a dark shade (adjustable) sits over it, script text on top with a fixed reading line at 35% height. */
+  :root{
+    --bg:#101319;
+    --panel:#171b23;
+    --ink:#ece9e1;
+    --dim:#566071;
+    --line:#2a313d;
+    --accent:#ffb454;
+    --ok:#6fcf97;
+    --warn:#ff7a6b;
+    --rec:#ff3b30;
+    --font:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    --fs:44px;
+    --shade:.55;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font-family:var(--font);-webkit-text-size-adjust:100%}
+  button,select,textarea,input{font:inherit;color:inherit}
+  [hidden]{display:none!important}
+
+  /* setup */
+  #setup{min-height:100%;display:flex;flex-direction:column;gap:16px;padding:max(20px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(20px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));max-width:720px;margin:0 auto}
+  h1{margin:0;font-size:24px;letter-spacing:-.01em}
+  .sub{margin:0;color:var(--dim);font-size:14px;line-height:1.5}
+  textarea{flex:1;min-height:260px;width:100%;resize:vertical;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:14px;font-size:17px;line-height:1.55}
+  textarea:focus,select:focus,button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+  label{font-size:13px;color:var(--dim);display:flex;flex-direction:column;gap:6px;flex:1;min-width:140px}
+  select{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:10px}
+  .btn{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:12px 16px;cursor:pointer;min-height:44px}
+  .btn:active{transform:translateY(1px)}
+  .go{background:var(--accent);color:#1b1305;border-color:var(--accent);font-weight:700;font-size:17px;width:100%}
+  #support{font-size:13px;color:var(--warn);margin:0}
+
+  /* prompter */
+  #prompter{position:fixed;inset:0;background:#000;overflow:hidden}
+  #cam{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#000}
+  #cam.flip{transform:scaleX(-1)}
+  #shade{position:absolute;inset:0;background:var(--bg);opacity:var(--shade);pointer-events:none}
+  #scroller{position:absolute;inset:0;overflow-y:auto;overscroll-behavior:contain;padding:35vh max(20px,env(safe-area-inset-right)) 70vh max(20px,env(safe-area-inset-left));scrollbar-width:none}
+  #scroller::-webkit-scrollbar{display:none}
+  #text{max-width:900px;margin:0 auto;font-size:var(--fs);line-height:1.38;font-weight:700;letter-spacing:-.005em;text-shadow:0 2px 10px rgba(0,0,0,.75),0 0 2px rgba(0,0,0,.6)}
+  #text.mirror{transform:scaleX(-1)}
+  #text p{margin:0 0 .7em}
+  .w{color:var(--ink);cursor:pointer;border-radius:3px;transition:color .25s}
+  .w.r{color:rgba(236,233,225,.38)}
+  .w.cur{color:var(--accent);box-shadow:0 .09em 0 var(--accent)}
+  #mark{position:absolute;left:0;right:0;top:35vh;height:0;pointer-events:none;border-top:1px dashed rgba(236,233,225,.25)}
+  #mark::before{content:"";position:absolute;left:max(0px,env(safe-area-inset-left));top:-7px;border:7px solid transparent;border-left:10px solid var(--accent);border-right:0}
+  #prog{position:absolute;left:0;top:0;height:3px;background:var(--accent);width:0;transition:width .3s;z-index:3}
+
+  #recbadge{position:absolute;top:max(12px,env(safe-area-inset-top));right:max(14px,env(safe-area-inset-right));z-index:4;display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:14px;background:rgba(16,19,25,.7);padding:6px 12px;border-radius:99px}
+  #recbadge i{width:10px;height:10px;border-radius:50%;background:var(--rec);animation:blink 1s infinite}
+  @keyframes blink{50%{opacity:.25}}
+
+  #bar{position:absolute;left:0;right:0;bottom:0;z-index:4;display:flex;flex-direction:column;gap:8px;align-items:center;padding:24px max(12px,env(safe-area-inset-right)) max(10px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left));background:linear-gradient(to top,rgba(16,19,25,.92) 60%,transparent)}
+  .grp{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:center}
+  #bar .btn{padding:8px 14px;min-height:42px;font-size:15px;background:rgba(23,27,35,.92)}
+  #recbtn{background:var(--rec)!important;border-color:var(--rec)!important;color:#fff;font-weight:700;min-width:104px}
+  #recbtn:disabled{opacity:.4;cursor:not-allowed}
+  #pill{font-family:var(--mono);font-size:13px;padding:8px 12px;border-radius:99px;border:1px solid var(--line);background:rgba(23,27,35,.92);color:#9aa4b2;min-width:118px;text-align:center}
+  #pill.on{color:var(--ok);border-color:var(--ok)}
+  #pill.lost{color:var(--accent);border-color:var(--accent)}
+  #pill.err{color:var(--warn);border-color:var(--warn)}
+  .shadeCtl{display:flex;align-items:center;gap:8px;font-size:13px;color:#c9ced6;background:rgba(23,27,35,.92);border:1px solid var(--line);border-radius:6px;padding:6px 12px;min-height:42px}
+  .shadeCtl input{width:120px;accent-color:var(--accent)}
+  #bar.recording .adj{display:none}
+
+  /* review */
+  #review{position:fixed;inset:0;z-index:10;background:var(--bg);display:flex;flex-direction:column;gap:14px;align-items:center;padding:max(16px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(16px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left))}
+  #review video{flex:1;min-height:0;max-width:100%;width:100%;background:#000;border-radius:6px}
+  #review .note{margin:0;color:var(--dim);font-size:13px;text-align:center}
+  @media (prefers-reduced-motion:reduce){.w,#prog{transition:none}#recbadge i{animation:none}}
+</style>
+</head>
+<body>
+
+<main id="setup">
+  <div>
+    <h1>Voice Prompter Cam</h1>
+    <p class="sub">Read your script while looking at the camera. The script scrolls only while you read it, and the camera records without the text.</p>
+  </div>
+  <textarea id="script" spellcheck="false" aria-label="Your script"></textarea>
+  <div class="row">
+    <label for="lang">Speaking language
+      <select id="lang">
+        <option value="en-PH">English (Philippines)</option>
+        <option value="en-US">English (US)</option>
+        <option value="fil-PH">Filipino</option>
+        <option value="en-GB">English (UK)</option>
+      </select>
+    </label>
+    <label for="size">Text size
+      <select id="size">
+        <option value="30">Small</option>
+        <option value="40">Medium</option>
+        <option value="52">Large</option>
+        <option value="68">Extra large</option>
+      </select>
+    </label>
+    <label for="cam-pick">Camera
+      <select id="cam-pick">
+        <option value="user">Front (selfie)</option>
+        <option value="environment">Back</option>
+      </select>
+    </label>
+  </div>
+  <p id="support" hidden>This browser has no speech recognition. Open the page in Chrome or Edge. You can still tap a word to move the scroll by hand.</p>
+  <button class="btn go" id="start">Start camera and prompter</button>
+</main>
+
+<section id="prompter" hidden>
+  <video id="cam" playsinline muted autoplay></video>
+  <div id="shade"></div>
+  <div id="prog"></div>
+  <div id="scroller"><div id="text"></div></div>
+  <div id="mark"></div>
+  <div id="recbadge" hidden><i></i><span id="timer">00:00</span></div>
+  <div id="bar">
+    <div class="grp">
+      <button class="btn" id="recbtn">Record</button>
+      <span id="pill" role="status">Mic off</span>
+    </div>
+    <div class="grp adj">
+      <label class="shadeCtl" for="shadeRange">Background
+        <input type="range" id="shadeRange" min="0" max="95" value="55" aria-label="Background darkness">
+      </label>
+      <button class="btn" id="smaller" aria-label="Smaller text">A−</button>
+      <button class="btn" id="bigger" aria-label="Bigger text">A+</button>
+    </div>
+    <div class="grp adj">
+      <button class="btn" id="back">Edit</button>
+      <button class="btn" id="top">From top</button>
+      <button class="btn" id="mic">Pause voice</button>
+      <button class="btn" id="flip">Flip camera</button>
+      <button class="btn" id="mirror">Mirror text</button>
+    </div>
+  </div>
+</section>
+
+<section id="review" hidden>
+  <video id="playback" controls playsinline></video>
+  <div class="grp">
+    <button class="btn go" id="save" style="width:auto">Save video</button>
+    <button class="btn" id="again">Discard and record again</button>
+  </div>
+  <p class="note" id="savenote">If Save does nothing on your phone, press and hold the video and choose download.</p>
+</section>
+
+<script>
+// ==MATCHER==
+function norm(w){return w.toLowerCase().replace(/[’']/g,'').replace(/[^\p{L}\p{N}]/gu,'');}
+function lev(a,b){
+  const m=a.length,n=b.length;let prev=new Array(n+1),cur=new Array(n+1);
+  for(let j=0;j<=n;j++)prev[j]=j;
+  for(let i=1;i<=m;i++){cur[0]=i;
+    for(let j=1;j<=n;j++){cur[j]=Math.min(prev[j]+1,cur[j-1]+1,prev[j-1]+(a[i-1]===b[j-1]?0:1));}
+    const t=prev;prev=cur;cur=t;}
+  return prev[n];
+}
+// similarity of a script word (a) and a spoken word (b); 0 means no match
+function sim(a,b,partial){
+  if(a===b)return 1;
+  if(!a||!b)return 0;
+  if(partial&&b.length>=3&&a.startsWith(b))return 0.7;
+  const L=Math.max(a.length,b.length);
+  if(L<4)return 0;
+  const r=1-lev(a,b)/L;
+  return r>=0.75?r*0.9:0;
+}
+// find where the last few spoken words sit in a window of the script around pos
+function locate(ck,pos,spoken,o){
+  o=o||{};
+  const back=o.back??6,fwd=o.fwd??40,tailN=o.tail??7;
+  const tail=spoken.slice(-tailN);
+  const need=Math.min(3,tail.length);
+  if(!need||!ck.length)return null;
+  const lo=Math.max(0,pos-back),hi=Math.min(ck.length-1,pos+fwd);
+  let best=null;
+  for(let s=lo;s<=hi;s++){
+    let j=s,matched=0,score=0,gaps=0,end=-1;
+    for(let t=0;t<tail.length;t++){
+      const partial=t===tail.length-1;
+      for(let k=j;k<=Math.min(ck.length-1,j+2);k++){
+        const sc=sim(ck[k],tail[t],partial);
+        if(sc>0){matched++;score+=sc;gaps+=k-j;end=k;j=k+1;break;}
+      }
+    }
+    if(matched<need)continue;
+    if(tail.length<3&&end>pos+3)continue;
+    const val=score-0.3*gaps-0.01*Math.abs(end+1-pos);
+    if(!best||val>best.val)best={end,matched,val};
+  }
+  return best;
+}
+// st = {pos, pending}. Moves pos only when the match is confident.
+function step(ck,st,spoken){
+  const r=locate(ck,st.pos,spoken);
+  if(!r)return{matched:false,moved:false};
+  const np=r.end+1,dist=np-st.pos;
+  if(dist===0){st.pending=-1;return{matched:true,moved:false};}
+  if(dist<0){
+    if(r.matched<4)return{matched:true,moved:false};
+    st.pos=np;st.pending=-1;return{matched:true,moved:true};
+  }
+  if(dist>14){
+    if(st.pending>=0&&Math.abs(np-st.pending)<=4){st.pos=np;st.pending=-1;return{matched:true,moved:true};}
+    st.pending=np;return{matched:true,moved:false};
+  }
+  st.pos=np;st.pending=-1;return{matched:true,moved:true};
+}
+// ==/MATCHER==
+
+(function(){
+  const $=id=>document.getElementById(id);
+  const SAMPLE="Hi everyone, thanks for joining me today.\n\nI want to share a quick update on what we have been building. The idea is simple: a teleprompter that follows your voice instead of running on a timer.\n\nIf you skip a line, it keeps up. If you stop to ad-lib, it waits right where you left off. When you come back to the script, it picks up again.\n\nThat is all for now. Thank you for listening.";
+  const store={
+    get(k,d){try{const v=localStorage.getItem(k);return v===null?d:v;}catch(e){return d;}},
+    set(k,v){try{localStorage.setItem(k,v);}catch(e){}}
+  };
+
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  const scriptEl=$('script'),langEl=$('lang'),sizeEl=$('size'),facingEl=$('cam-pick');
+  scriptEl.value=store.get('vp.script',SAMPLE);
+  langEl.value=store.get('vp.lang','en-PH');
+  sizeEl.value=store.get('vp.size','40');
+  facingEl.value=store.get('vp.facing','user');
+  if(!SR)$('support').hidden=false;
+
+  let tokens=[],keyed=[],ck=[],tokToCk=[],spans=[];
+  const st={pos:0,pending:-1};
+  let listening=false,rec=null,wake=null,lastMatch=0,lastHeard=0,raf=0,target=null,shownPos=-1,lostTimer=0;
+  const scroller=$('scroller'),textEl=$('text'),pill=$('pill'),cam=$('cam'),bar=$('bar');
+
+  /* ---------- text and matching ---------- */
+  function setSize(px){
+    px=Math.max(22,Math.min(96,px));
+    document.documentElement.style.setProperty('--fs',px+'px');
+    store.set('vp.size',String(px));
+    if(spans.length)aim(true);
+  }
+  function curSize(){return parseInt(getComputedStyle(document.documentElement).getPropertyValue('--fs'),10)||40;}
+
+  function build(){
+    textEl.textContent='';
+    tokens=[];keyed=[];ck=[];tokToCk=[];spans=[];
+    for(const line of scriptEl.value.split(/\n/)){
+      const p=document.createElement('p');
+      const words=line.split(/\s+/).filter(Boolean);
+      if(!words.length){p.innerHTML='&nbsp;';textEl.appendChild(p);continue;}
+      words.forEach((w,i)=>{
+        const span=document.createElement('span');
+        span.className='w';span.textContent=w;
+        span.dataset.t=String(tokens.length);
+        tokens.push(w);
+        keyed.push(norm(w));
+        spans.push(span);
+        p.appendChild(span);
+        if(i<words.length-1)p.appendChild(document.createTextNode(' '));
+      });
+      textEl.appendChild(p);
+    }
+    let c=0;const map=[];
+    keyed.forEach((k,i)=>{tokToCk[i]=c;if(k){ck.push(k);map.push(i);c++;}});
+    build.map=map;
+    st.pos=0;st.pending=-1;shownPos=-1;
+  }
+
+  function paint(){
+    const map=build.map;
+    const curTok=st.pos<map.length?map[st.pos]:tokens.length;
+    const from=shownPos<0?0:Math.min(shownPos,curTok),to=shownPos<0?tokens.length:Math.max(shownPos,curTok);
+    for(let i=from;i<=Math.min(to,tokens.length-1);i++){
+      const s=spans[i];
+      s.classList.toggle('r',i<curTok);
+      s.classList.toggle('cur',i===curTok);
+    }
+    shownPos=curTok;
+    $('prog').style.width=(ck.length?Math.min(100,st.pos/ck.length*100):0)+'%';
+  }
+
+  function aim(jump){
+    const map=build.map;
+    const i=st.pos<map.length?map[st.pos]:tokens.length-1;
+    const el=spans[i];if(!el)return;
+    target=Math.max(0,el.offsetTop-scroller.clientHeight*0.35+4);
+    if(jump){scroller.scrollTop=target;target=null;return;}
+    if(!raf)raf=requestAnimationFrame(tick);
+  }
+  function tick(){
+    raf=0;if(target===null)return;
+    const d=target-scroller.scrollTop;
+    if(Math.abs(d)<1){scroller.scrollTop=target;target=null;return;}
+    scroller.scrollTop+=Math.sign(d)*Math.min(Math.abs(d),Math.max(1.2,Math.abs(d)*0.14));
+    raf=requestAnimationFrame(tick);
+  }
+
+  function status(text,cls){pill.textContent=text;pill.className=cls||'';}
+
+  function feed(text){
+    const spoken=text.split(/\s+/).map(norm).filter(Boolean).slice(-12);
+    if(!spoken.length)return;
+    lastHeard=Date.now();
+    const r=step(ck,st,spoken);
+    if(r.matched)lastMatch=Date.now();
+    if(r.moved){paint();aim(false);}
+    refreshStatus();
+  }
+  function refreshStatus(){
+    if(!listening)return;
+    const now=Date.now();
+    if(now-lastMatch<2500)status('Following','on');
+    else if(now-lastHeard<4000)status('Waiting for script','lost');
+    else status('Listening','on');
+  }
+
+  /* ---------- voice following ---------- */
+  function startRec(){
+    if(!SR){status('No speech support','err');return;}
+    listening=true;
+    rec=new SR();
+    rec.lang=langEl.value;rec.continuous=true;rec.interimResults=true;
+    rec.onresult=e=>{let t='';for(let i=0;i<e.results.length;i++)t+=e.results[i][0].transcript+' ';feed(t);};
+    rec.onerror=e=>{
+      if(e.error==='not-allowed'||e.error==='service-not-allowed'){listening=false;status('Mic blocked','err');$('mic').textContent='Resume voice';}
+      else if(e.error==='audio-capture'){listening=false;status('Mic busy: tap words','err');$('mic').textContent='Resume voice';}
+    };
+    rec.onend=()=>{if(listening)setTimeout(()=>{try{rec.start();}catch(e){}},150);};
+    try{rec.start();status('Listening','on');$('mic').textContent='Pause voice';}catch(e){status('Voice error','err');}
+    clearInterval(lostTimer);lostTimer=setInterval(refreshStatus,800);
+  }
+  function stopRec(){
+    listening=false;clearInterval(lostTimer);
+    if(rec){try{rec.onend=null;rec.stop();}catch(e){}}
+    status('Voice off','');$('mic').textContent='Resume voice';
+  }
+  async function getWake(){try{if(navigator.wakeLock)wake=await navigator.wakeLock.request('screen');}catch(e){}}
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&!$('prompter').hidden)getWake();});
+
+  /* ---------- camera and recording ---------- */
+  let stream=null,facing='user',mr=null,chunks=[],timerId=0,t0=0,blobURL=null,ext='webm',hasAudio=false;
+
+  function pickType(){
+    if(typeof MediaRecorder==='undefined')return null;
+    const list=['video/mp4;codecs=avc1,mp4a.40.2','video/mp4','video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm'];
+    for(const t of list){try{if(MediaRecorder.isTypeSupported(t))return t;}catch(e){}}
+    return '';
+  }
+  function closeCam(){
+    if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}
+    cam.srcObject=null;
+  }
+  async function openCam(){
+    closeCam();
+    if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){status('Camera needs https','err');$('recbtn').disabled=true;return false;}
+    hasAudio=true;
+    try{
+      stream=await navigator.mediaDevices.getUserMedia({
+        video:{facingMode:facing,width:{ideal:1920},height:{ideal:1080}},
+        audio:{echoCancellation:true,noiseSuppression:true}
+      });
+    }catch(e){
+      try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:facing},audio:false});hasAudio=false;}
+      catch(e2){stream=null;}
+    }
+    if(!stream){status('Camera blocked','err');$('recbtn').disabled=true;return false;}
+    cam.srcObject=stream;
+    cam.classList.toggle('flip',facing==='user');
+    try{await cam.play();}catch(e){}
+    $('recbtn').disabled=typeof MediaRecorder==='undefined';
+    return true;
+  }
+
+  function fmt(ms){const s=Math.floor(ms/1000);return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0');}
+
+  function startRecording(){
+    if(!stream||mr)return;
+    const type=pickType();
+    if(type===null){return;}
+    chunks=[];
+    try{mr=new MediaRecorder(stream,type?{mimeType:type,videoBitsPerSecond:6000000}:undefined);}
+    catch(e){try{mr=new MediaRecorder(stream);}catch(e2){mr=null;return;}}
+    ext=(mr.mimeType||type||'').indexOf('mp4')>=0?'mp4':'webm';
+    mr.ondataavailable=e=>{if(e.data&&e.data.size)chunks.push(e.data);};
+    mr.onstop=()=>{
+      const blob=new Blob(chunks,{type:mr.mimeType||('video/'+ext)});
+      mr=null;
+      if(blobURL)URL.revokeObjectURL(blobURL);
+      blobURL=URL.createObjectURL(blob);
+      $('playback').src=blobURL;
+      $('savenote').textContent=hasAudio?'If Save does nothing on your phone, press and hold the video and choose download.':'The microphone was not available, so this video has no sound.';
+      $('review').hidden=false;
+    };
+    mr.start(1000);
+    t0=Date.now();
+    $('recbadge').hidden=false;$('timer').textContent='00:00';
+    timerId=setInterval(()=>{$('timer').textContent=fmt(Date.now()-t0);},250);
+    bar.classList.add('recording');
+    $('recbtn').textContent='Stop';
+    $('flip').disabled=true;
+  }
+  function stopRecording(){
+    if(!mr)return;
+    clearInterval(timerId);
+    $('recbadge').hidden=true;
+    bar.classList.remove('recording');
+    $('recbtn').textContent='Record';
+    $('flip').disabled=false;
+    try{mr.stop();}catch(e){}
+  }
+
+  /* ---------- screens ---------- */
+  async function showPrompter(){
+    store.set('vp.script',scriptEl.value);store.set('vp.lang',langEl.value);store.set('vp.facing',facingEl.value);
+    if(!scriptEl.value.trim())return;
+    facing=facingEl.value;
+    $('setup').hidden=true;$('prompter').hidden=false;
+    setSize(parseInt(sizeEl.value,10));
+    build();paint();aim(true);
+    getWake();
+    await openCam();
+    startRec_voice();
+  }
+  function startRec_voice(){startRec();}
+  function showSetup(){
+    if(mr)stopRecording();
+    stopRec();closeCam();
+    try{if(wake)wake.release();}catch(e){}
+    $('review').hidden=true;
+    $('prompter').hidden=true;$('setup').hidden=false;
+  }
+
+  /* ---------- wiring ---------- */
+  $('start').onclick=showPrompter;
+  $('back').onclick=showSetup;
+  $('mic').onclick=()=>{listening?stopRec():startRec();};
+  $('smaller').onclick=()=>setSize(curSize()-4);
+  $('bigger').onclick=()=>setSize(curSize()+4);
+  $('mirror').onclick=()=>{textEl.classList.toggle('mirror');store.set('vp.mirror',textEl.classList.contains('mirror')?'1':'0');};
+  if(store.get('vp.mirror','0')==='1')textEl.classList.add('mirror');
+  $('top').onclick=()=>{st.pos=0;st.pending=-1;paint();aim(false);};
+  $('flip').onclick=async()=>{facing=facing==='user'?'environment':'user';facingEl.value=facing;store.set('vp.facing',facing);await openCam();};
+  $('recbtn').onclick=()=>{mr?stopRecording():startRecording();};
+
+  const shadeRange=$('shadeRange');
+  function setShade(v){document.documentElement.style.setProperty('--shade',String(v/100));store.set('vp.shade',String(v));}
+  shadeRange.value=store.get('vp.shade','55');
+  setShade(parseInt(shadeRange.value,10));
+  shadeRange.oninput=()=>setShade(parseInt(shadeRange.value,10));
+
+  $('save').onclick=()=>{
+    if(!blobURL)return;
+    const d=new Date(),p=n=>String(n).padStart(2,'0');
+    const a=document.createElement('a');
+    a.href=blobURL;
+    a.download='take-'+d.getFullYear()+p(d.getMonth()+1)+p(d.getDate())+'-'+p(d.getHours())+p(d.getMinutes())+p(d.getSeconds())+'.'+ext;
+    document.body.appendChild(a);a.click();a.remove();
+  };
+  $('again').onclick=()=>{
+    $('playback').removeAttribute('src');$('playback').load();
+    if(blobURL){URL.revokeObjectURL(blobURL);blobURL=null;}
+    $('review').hidden=true;
+    st.pos=0;st.pending=-1;paint();aim(true);
+  };
+
+  // tap any word to put the reading position there
+  textEl.addEventListener('click',e=>{
+    const s=e.target.closest('.w');if(!s)return;
+    st.pos=tokToCk[parseInt(s.dataset.t,10)]||0;st.pending=-1;
+    paint();aim(false);
+  });
+
+  window.__feed=feed; // test without a mic: __feed("thanks for joining me")
+})();
+</script>
+</body>
+</html>
